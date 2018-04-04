@@ -62,7 +62,8 @@ signal.signal(signal.SIGTERM, shutdown)
 # main
 parser = argparse.ArgumentParser(description='Thermod database statistics gathering')
 parser.add_argument('-v', '--version', action='version', version='%(prog)s {}'.format(__version__))
-parser.add_argument('-f', '--database', action='store', default='thermod-dbstats.db', help='path to database file')
+parser.add_argument('-f', '--dbfile', action='store', default='thermod-dbstats.db', help='path to database file')
+parser.add_argument('-t', '--timelimit', action='store', type=int, default=1095, help='number of days to keep in the database (default 3 years)')
 parser.add_argument('-H', '--host', action='store', default='localhost', help='thermod socket host name')
 parser.add_argument('-P', '--port', action='store', type=int, default=4344, help='thermod socket port')
 parser.add_argument('-D', '--debug', action='store_true', help='start monitor in debug mode')
@@ -85,54 +86,110 @@ else:
     logger.addHandler(console)
 
 
-def attach_monitor(sleep=30):
-	logger.info('Thermod DB-Stats monitor v{} started', __version__)
+# main
+logger.info('Thermod DB-Stats monitor v{} started', __version__)
 
-	logger.debug('opening database file {}', args.database)
-	connection = sqlite3.connect(args.database)
-	cursor = connection.cursor()
-	
-	while running:
-		try:
-			logger.debug('start connection to Thermod')
-      
+request_url = 'http://{}:{}'.format(args.host, args.port)
 
-		except (requests.ConnectionError, requests.Timeout) as e:
-      logger.error('error while connecting to Thermod: {}', e)
-			logger.info('sleeping for {} seconds', sleep)
-			time.sleep(sleep)
-	
+last_status = None
+
+try:
+    logger.debug('opening database {}', args.dbfile)
+    connection = sqlite3.connect(args.dbfile)
 
     try:
-        try:
-            logger.debug('start first connection to Thermod')
-            # TODO
+        cursor = connection.cursor()
+        session = requests.Session()
         
-        except (requests.ConnectionError, requests.Timeout) as e:
-            # do nothing, continue and go to sleep
-            logger.error('errore while connecting to Thermod: {}', e)
+        logger.debug('get current status from thermod socket')
+        rsp = session.get('{}/status'.format(request_url))
+        rsp.raise_for_status()  # check error status code
         
-        logger.debug('starting main cycle')
+        logger.debug('processing response data')
+        jrsp = rsp.json()
+        last_status = ThermodStatus(**jrsp)
+        logger.debug('current status: {}', last_status)
+        
+        if last_status.heating_status == 1:
+            pass  # TODO insert
+        
+        else:
+            # nothing to do
+            pass
         
         while running:
-            try:
-								# TODO
-                pass
+            logger.debug('attach monitor to thermod')
+            rsp = session.get('{}/monitor'.format(request_url))
+            rsp.raise_for_status()  # check error status code
             
-            except ValueError as ve:
-                logger.warning('invalid value returned from Thermod: {}', ve)
+            logger.debug('processing response data')
+            jrsp = rsp.json()
+            status = ThermodStatus(**jrsp)
+            logger.debug('current status: {}', status)
             
-            except requests.RequestException as e:
-                logger.warning('error while communicating with Thermod: {}', e)
-                time.sleep(10)
+            if status.heating_status > last_status.heating_status:  # heating just switched on
+                pass  # TODO inserire nuova riga
+            
+            elif status.heating_status < last_status.heating_status:  # heating just switched off
+                pass  # TODO aggiornare l'ultima riga
+            
+            logger.debug('saving current status as last status')
+            last_status = status
     
-    except Exception as e:
-        logger.critical('unknown error: {}', e)
-        main_return_code = 1
+    except sqlite3.Error:
+        pass  # TODO capire se qui serve
     
-    except KeyboardInterrupt:
-        logger.debug('shutdown requested by keyboard interrupt')
-        shutdown()
+    finally:
+        connection.close()
+
+except sqlite3.Error:
+    # TODO
+    pass
+
+
+	#cursor = connection.cursor()
+	#
+	#while running:
+	#	try:
+	#		logger.debug('start connection to Thermod')
+    #  
+    #
+	#	except (requests.ConnectionError, requests.Timeout) as e:
+    #  logger.error('error while connecting to Thermod: {}', e)
+	#		logger.info('sleeping for {} seconds', sleep)
+	#		time.sleep(sleep)
+	#
+    #
+    #try:
+    #    try:
+    #        logger.debug('start first connection to Thermod')
+    #        # TODO
+    #    
+    #    except (requests.ConnectionError, requests.Timeout) as e:
+    #        # do nothing, continue and go to sleep
+    #        logger.error('errore while connecting to Thermod: {}', e)
+    #    
+    #    logger.debug('starting main cycle')
+    #    
+    #    while running:
+    #        try:
+	#            # TODO
+    #            pass
+    #        
+    #        except ValueError as ve:
+    #            logger.warning('invalid value returned from Thermod: {}', ve)
+    #        
+    #        except requests.RequestException as e:
+    #            logger.warning('error while communicating with Thermod: {}', e)
+    #            time.sleep(10)
+    #
+    #except Exception as e:
+    #    logger.critical('unknown error: {}', e)
+    #    main_return_code = 1
+    #
+    #except KeyboardInterrupt:
+    #    logger.debug('shutdown requested by keyboard interrupt')
+    #    shutdown()
 
 logger.info('closing monitor with return code {}', main_return_code)
 exit(main_return_code)
