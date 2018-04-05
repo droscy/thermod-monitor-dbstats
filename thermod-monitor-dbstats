@@ -37,11 +37,11 @@ from logging.handlers import SysLogHandler
 
 __version__ = '0.0.1'
 __date__ = '2018-04-04'
-__updated__ = '2018-04-04'
+__updated__ = '2018-04-05'
 
 
 # setting up logging system
-logger = LogStyleAdapter(logging.getLogger('{}.buttonled'.format(LOGGER_BASE_NAME)))
+logger = LogStyleAdapter(logging.getLogger('{}.dbstats'.format(LOGGER_BASE_NAME)))
 logger.setLevel(logging.INFO)
 
 
@@ -90,15 +90,44 @@ else:
 logger.info('Thermod DB-Stats monitor v{} started', __version__)
 
 request_url = 'http://{}:{}'.format(args.host, args.port)
-
 last_status = None
+last_switchon_time = 0
+
+_create_table = '''create table if not exists thermod_stats 
+                   (
+                     switchon_time datetime,
+                     switchon_temp real,
+                     switchon_status integer,
+                     switchoff_time datetime,
+                     switchoff_temp real,
+                     switchoff_status integer
+                   )'''
+
+_create_index_on = 'create unique index if not exists idx_switchon on thermod_stats (switchon_time)'
+_create_index_off = 'create unique index if not exists idx_switchoff on thermod_stats (switchoff_time)'
+
+_insert_switchon = 'insert into thermod_stats values (?,?,?,NULL,NULL,NULL)'
+_update_switchoff = '''update thermod_stats
+                       set
+                         switchoff_time = ?,
+                         switchoff_temp = ?,
+                         switchoff_status = ?
+                       where switchon_time = ?'''
 
 try:
     logger.debug('opening database {}', args.dbfile)
     connection = sqlite3.connect(args.dbfile)
 
     try:
+        logger.debug('opening database cursor')
         cursor = connection.cursor()
+        
+        logger.debug('creating table and indexes')
+        cursor.execute(_create_table)
+        cursor.execute(_create_index_on)
+        cursor.execute(_create_index_off)
+        
+        logger.debug('creating network session')
         session = requests.Session()
         
         logger.debug('get current status from thermod socket')
@@ -111,14 +140,19 @@ try:
         logger.debug('current status: {}', last_status)
         
         if last_status.heating_status == 1:
-            pass  # TODO insert
+            logger.debug('the heating is currently on, inserting a new record in the database')
+            cursor.execute(_insert_switchon, (last_status.timestamp,
+                                              last_status.current_temperature,
+                                              last_status.heating_status))
+            connection.commit()
+            last_switchon_time = last_status.timestamp
         
         else:
             # nothing to do
             pass
         
         while running:
-            logger.debug('attach monitor to thermod')
+            logger.debug('attaching monitor to thermod')
             rsp = session.get('{}/monitor'.format(request_url))
             rsp.raise_for_status()  # check error status code
             
@@ -128,9 +162,25 @@ try:
             logger.debug('current status: {}', status)
             
             if status.heating_status > last_status.heating_status:  # heating just switched on
-                pass  # TODO inserire nuova riga
+                logger.debug('the heating has just been switched ON, inserting '
+                             'a new record in the database')
+                
+                cursor.execute(_insert_switchon, (status.timestamp,
+                                                  status.current_temperature,
+                                                  status.heating_status))
+                connection.commit()
+                last_switchon_time = status.timestamp
             
             elif status.heating_status < last_status.heating_status:  # heating just switched off
+                logger.debug('the heating has just been switched OFF, updating '
+                             'the last switchon record')
+                
+                cursor.execute(_update_switchoff, (status.timestamp,
+                                                   status.current_temperature,
+                                                   status.heating_status,
+                                                   last_status.timestamp))  # the update key is the timestamp of the last
+                connection.commit()
+                
                 pass  # TODO aggiornare l'ultima riga
             
             logger.debug('saving current status as last status')
