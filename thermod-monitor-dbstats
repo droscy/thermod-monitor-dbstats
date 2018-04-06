@@ -34,38 +34,44 @@ from thermod import ThermodStatus
 from thermod.common import LogStyleAdapter, LOGGER_BASE_NAME, LOGGER_FMT_MSG, \
     LOGGER_FMT_TIME, LOGGER_FMT_STYLE, LOGGER_FMT_MSG_SYSLOG
 from logging.handlers import SysLogHandler
+from datetime import datetime
 
-__version__ = '0.0.1'
+__version__ = '1.0.0b1'
 __date__ = '2018-04-04'
-__updated__ = '2018-04-05'
+__updated__ = '2018-04-06'
 
 
 # setting up logging system
 logger = LogStyleAdapter(logging.getLogger('{}.dbstats'.format(LOGGER_BASE_NAME)))
 logger.setLevel(logging.INFO)
 
-
-
 # shutdown check and return code
-running = True
-main_return_code = 0
+RUNNING = True
+MAIN_RETURN_CODE = 0
 
 def shutdown(signum=None, frame=None, exitcode=0):
-    global running, main_return_code
+    global RUNNING, MAIN_RETURN_CODE
     logger.info('shutdown requested')
-    running = False
-    main_return_code = exitcode
+    RUNNING = False
+    MAIN_RETURN_CODE = exitcode
 
 signal.signal(signal.SIGTERM, shutdown)
 
+# return codes on error
+RET_CODE_SQL_ERR = 21
+RET_CODE_UNKNOWN_ERR_INNER = 73
+RET_CODE_UNKNOWN_ERR_OUTER = 75
+RET_CODE_UNKNOWN_ERR = 77
 
-# main
+
+# parsing input arguments
 parser = argparse.ArgumentParser(description='Thermod database statistics gathering')
 parser.add_argument('-v', '--version', action='version', version='%(prog)s {}'.format(__version__))
-parser.add_argument('-f', '--dbfile', action='store', default='thermod-dbstats.db', help='path to database file')
-parser.add_argument('-t', '--timelimit', action='store', type=int, default=1095, help='number of days to keep in the database (default 3 years)')
-parser.add_argument('-H', '--host', action='store', default='localhost', help='thermod socket host name')
+parser.add_argument('-f', '--dbfile', action='store', default='thermod-stats.db', help='path to database file')
+parser.add_argument('-t', '--timelimit', action='store', type=int, default=1095, help='number of days to keep in the database (default 3 years, set to 0 to disable)')
+parser.add_argument('-H', '--host', action='store', default='localhost', help='thermod socket hostname')
 parser.add_argument('-P', '--port', action='store', type=int, default=4344, help='thermod socket port')
+parser.add_argument('-C', '--noclean', action='store_true', help='do not delete invalid records on monitor shutdown')
 parser.add_argument('-D', '--debug', action='store_true', help='start monitor in debug mode')
 parser.add_argument('-d', '--daemon', action='store_true', help='start monitor in background (log to syslog)')
 args = parser.parse_args()
@@ -89,34 +95,51 @@ else:
 # main
 logger.info('Thermod DB-Stats monitor v{} started', __version__)
 
-request_url = 'http://{}:{}'.format(args.host, args.port)
-last_status = None
-last_switchon_time = 0
+REQUEST_URI = 'http://{}:{}'.format(args.host, args.port)
+LAST_STATUS = None
+LAST_SWITCHON_TIME = 0
 
-_create_table = '''create table if not exists thermod_stats 
-                   (
-                     switchon_time datetime,
-                     switchon_temp real,
-                     switchon_status integer,
-                     switchoff_time datetime,
-                     switchoff_temp real,
-                     switchoff_status integer
-                   )'''
+# init queries
+_create_table = '''\
+create table if not exists thermod_stats 
+(
+  hostname text not null,
+  switchon_time datetime not null,
+  switchon_temp real,
+  switchon_status text,
+  switchoff_time datetime,
+  switchoff_temp real,
+  switchoff_status text
+)'''
 
 _create_index_on = 'create unique index if not exists idx_switchon on thermod_stats (switchon_time)'
-_create_index_off = 'create unique index if not exists idx_switchoff on thermod_stats (switchoff_time)'
 
-_insert_switchon = 'insert into thermod_stats values (?,?,?,NULL,NULL,NULL)'
-_update_switchoff = '''update thermod_stats
-                       set
-                         switchoff_time = ?,
-                         switchoff_temp = ?,
-                         switchoff_status = ?
-                       where switchon_time = ?'''
+_insert_switchon = 'insert into thermod_stats values (?,?,?,?,NULL,NULL,NULL)'
+
+_update_switchoff = '''\
+update thermod_stats
+set
+  switchoff_time = ?,
+  switchoff_temp = ?,
+  switchoff_status = ?
+where hostname = ?
+  and switchon_time = ?'''
+
+_delete_old_records = '''\
+delete from thermod_stats
+where hostname = ?
+  and switchon_time < (strftime('%s','now') - (?*24*60*60))'''
+
+_delete_invalid_records = 'delete from thermod_stats where hostname = ? and switchoff_time is null'
 
 try:
     logger.debug('opening database {}', args.dbfile)
     connection = sqlite3.connect(args.dbfile)
+    logger.info('database {} opened for host {}', args.dbfile, args.host)
+    
+    def rollback():
+        connection.rollback()
+        logger.info('no record has been inserted or updated')
 
     try:
         logger.debug('opening database cursor')
@@ -125,123 +148,191 @@ try:
         logger.debug('creating table and indexes')
         cursor.execute(_create_table)
         cursor.execute(_create_index_on)
-        cursor.execute(_create_index_off)
         
         logger.debug('creating network session')
         session = requests.Session()
         
-        logger.debug('get current status from thermod socket')
-        rsp = session.get('{}/status'.format(request_url))
-        rsp.raise_for_status()  # check error status code
-        
-        logger.debug('processing response data')
-        jrsp = rsp.json()
-        last_status = ThermodStatus(**jrsp)
-        logger.debug('current status: {}', last_status)
-        
-        if last_status.heating_status == 1:
-            logger.debug('the heating is currently on, inserting a new record in the database')
-            cursor.execute(_insert_switchon, (last_status.timestamp,
-                                              last_status.current_temperature,
-                                              last_status.heating_status))
-            connection.commit()
-            last_switchon_time = last_status.timestamp
-        
-        else:
-            # nothing to do
-            pass
-        
-        while running:
-            logger.debug('attaching monitor to thermod')
-            rsp = session.get('{}/monitor'.format(request_url))
+        # first connection
+        try:    
+            logger.debug('get current status from thermod socket')
+            rsp = session.get('{}/status'.format(REQUEST_URI))
             rsp.raise_for_status()  # check error status code
             
             logger.debug('processing response data')
             jrsp = rsp.json()
-            status = ThermodStatus(**jrsp)
-            logger.debug('current status: {}', status)
+            LAST_STATUS = ThermodStatus(**jrsp)
+            logger.debug('current status: {}', LAST_STATUS)
             
-            if status.heating_status > last_status.heating_status:  # heating just switched on
-                logger.debug('the heating has just been switched ON, inserting '
-                             'a new record in the database')
+            if not LAST_STATUS.error:
+                if LAST_STATUS.heating_status == 1:
+                    logger.debug('the heating is currently on, inserting a new record in the database')
+                    cursor.execute(_insert_switchon, (args.host,
+                                                      LAST_STATUS.timestamp,
+                                                      LAST_STATUS.current_temperature,
+                                                      LAST_STATUS.status))
+                    connection.commit()
+                    LAST_SWITCHON_TIME = LAST_STATUS.timestamp
                 
-                cursor.execute(_insert_switchon, (status.timestamp,
-                                                  status.current_temperature,
-                                                  status.heating_status))
+                else:
+                    logger.debug('the heating is currently off, waiting for the first switch on')
+            
+            else:
+                logger.warning('the status returned from thermod contains an '
+                               'error: {} ({})', LAST_STATUS.error,
+                                                 LAST_STATUS.explain)
+                
+                logger.info('no record has been inserted or updated')
+                # no need to rollback, no query executed
+            
+        except ValueError as ve:
+            logger.warning('invalid value returned from thermod: {}', ve)
+            rollback()
+        
+        except (requests.ConnectionError, requests.Timeout) as e:
+            logger.error('cannot contact thermod socket: {}', e)
+            rollback()
+        
+        except requests.RequestException as re:
+            logger.error('cannot get current status from thermod: {}', re)
+            rollback()
+            
+        except sqlite3.Error as sqle:
+            logger.error('database error: {}', sqle)
+            rollback()
+        
+        # main loop
+        while RUNNING:
+            try:
+                logger.debug('attaching monitor to thermod')
+                rsp = session.get('{}/monitor'.format(REQUEST_URI))
+                rsp.raise_for_status()  # check error status code
+                
+                logger.debug('processing response data')
+                jrsp = rsp.json()
+                status = ThermodStatus(**jrsp)
+                logger.debug('current status: {}', status)
+                
+                if not status.error:
+                    if status.heating_status > LAST_STATUS.heating_status:  # heating just switched on
+                        logger.debug('the heating has just been switched ON, inserting '
+                                     'a new record in the database')
+                        
+                        cursor.execute(_insert_switchon, (args.host,
+                                                          status.timestamp,
+                                                          status.current_temperature,
+                                                          status.status))
+                        connection.commit()
+                        LAST_SWITCHON_TIME = status.timestamp
+                    
+                    elif status.heating_status < LAST_STATUS.heating_status:  # heating just switched off
+                        logger.debug('the heating has just been switched OFF, '
+                                     'updating the last switchon record '
+                                     '(timestamp: {})', LAST_SWITCHON_TIME)
+                        
+                        cursor.execute(_update_switchoff, (status.timestamp,
+                                                           status.current_temperature,
+                                                           status.status,
+                                                           # the update key is
+                                                           # the hostname and
+                                                           # timestamp of the
+                                                           # last time the
+                                                           # heating has been
+                                                           # switched on
+                                                           args.host,
+                                                           LAST_SWITCHON_TIME))
+                        connection.commit()
+                        LAST_SWITCHON_TIME = 0
+                    
+                    else:
+                        logger.debug('no status change, nothing to do')
+                    
+                    logger.debug('saving current status as last status')
+                    LAST_STATUS = status
+                
+                else:
+                    logger.warning('the status returned from thermod contains an '
+                                   'error: {} ({})', LAST_STATUS.error,
+                                                     LAST_STATUS.explain)
+                    
+                    logger.info('no record has been inserted or updated')
+                    # no need to rollback, no query executed
+            
+            except ValueError as ve:
+                logger.warning('invalid value returned from thermod: {}', ve)
+                rollback()
+            
+            except requests.RequestException as re:
+                logger.error('cannot get current status from thermod: {}', re)
+                rollback()
+                
+                _sleep_sec = 10
+                logger.info('going to sleep for {} seconds', _sleep_sec)
+                time.sleep(_sleep_sec)
+            
+            except sqlite3.Error as sqle:
+                logger.error('database error: {}', sqle)
+                rollback()
+            
+            except Exception as e:
+                logger.critical('unknown error: {}', e)
+                rollback()
+                shutdown(exitcode=RET_CODE_UNKNOWN_ERR_INNER)
+            
+            except KeyboardInterrupt:
+                logger.debug('shutdown requested by keyboard interrupt')
+                shutdown()
+                rollback()
+        
+        # Removing old records only if timelimit is positive and the monitor
+        # is shutting down with no errors.
+        if args.timelimit > 0 and MAIN_RETURN_CODE == 0:
+            try:
+                logger.info('deleting records older than {}',
+                            datetime.fromtimestamp(time.time() - args.timelimit*24*60*60).strftime('%c'))
+                cursor.execute(_delete_old_records, (args.host, args.timelimit))
                 connection.commit()
-                last_switchon_time = status.timestamp
-            
-            elif status.heating_status < last_status.heating_status:  # heating just switched off
-                logger.debug('the heating has just been switched OFF, updating '
-                             'the last switchon record')
                 
-                cursor.execute(_update_switchoff, (status.timestamp,
-                                                   status.current_temperature,
-                                                   status.heating_status,
-                                                   last_status.timestamp))  # the update key is the timestamp of the last
+            except sqlite3.Error as sqle:
+                logger.warning('cannote delete old records: {}', sqle)
+                rollback()
+        
+        # Removing invalid records only if noclean is not set and the monitor
+        # is shutting down with no errors.
+        if not args.noclean and MAIN_RETURN_CODE == 0:
+            try:
+                logger.info('deleting invalid records (records with switchon '
+                            'time but no switchoff time)')
+                
+                cursor.execute(_delete_invalid_records, (args.host, ))
                 connection.commit()
                 
-                pass  # TODO aggiornare l'ultima riga
-            
-            logger.debug('saving current status as last status')
-            last_status = status
+            except sqlite3.Error as sqle:
+                logger.warning('cannote delete old records: {}', sqle)
+                rollback()
     
-    except sqlite3.Error:
-        pass  # TODO capire se qui serve
+    except sqlite3.Error as sqle:
+        logger.critical('cannot create table or indexes in database file: {}', sqle)
+        MAIN_RETURN_CODE = RET_CODE_SQL_ERR
+    
+    except Exception as e:
+        logger.critical('unknown error creating table or indexes in database file: {}', e)
+        MAIN_RETURN_CODE = RET_CODE_UNKNOWN_ERR_OUTER
     
     finally:
         connection.close()
 
 except sqlite3.Error:
-    # TODO
-    pass
+    logger.critical('cannot open database file: {}', sqle)
+    MAIN_RETURN_CODE = RET_CODE_SQL_ERR
 
+except Exception as e:
+    logger.critical('unknown error opening database file: {}', e)
+    MAIN_RETURN_CODE = RET_CODE_UNKNOWN_ERR
 
-	#cursor = connection.cursor()
-	#
-	#while running:
-	#	try:
-	#		logger.debug('start connection to Thermod')
-    #  
-    #
-	#	except (requests.ConnectionError, requests.Timeout) as e:
-    #  logger.error('error while connecting to Thermod: {}', e)
-	#		logger.info('sleeping for {} seconds', sleep)
-	#		time.sleep(sleep)
-	#
-    #
-    #try:
-    #    try:
-    #        logger.debug('start first connection to Thermod')
-    #        # TODO
-    #    
-    #    except (requests.ConnectionError, requests.Timeout) as e:
-    #        # do nothing, continue and go to sleep
-    #        logger.error('errore while connecting to Thermod: {}', e)
-    #    
-    #    logger.debug('starting main cycle')
-    #    
-    #    while running:
-    #        try:
-	#            # TODO
-    #            pass
-    #        
-    #        except ValueError as ve:
-    #            logger.warning('invalid value returned from Thermod: {}', ve)
-    #        
-    #        except requests.RequestException as e:
-    #            logger.warning('error while communicating with Thermod: {}', e)
-    #            time.sleep(10)
-    #
-    #except Exception as e:
-    #    logger.critical('unknown error: {}', e)
-    #    main_return_code = 1
-    #
-    #except KeyboardInterrupt:
-    #    logger.debug('shutdown requested by keyboard interrupt')
-    #    shutdown()
+except KeyboardInterrupt:
+    logger.debug('shutdown requested by keyboard interrupt')
 
-logger.info('closing monitor with return code {}', main_return_code)
-exit(main_return_code)
+logger.info('closing monitor with return code {}', MAIN_RETURN_CODE)
+exit(MAIN_RETURN_CODE)
 
 # vim: syntax=python fileencoding=utf-8
