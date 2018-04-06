@@ -29,6 +29,7 @@ import requests
 import logging
 import time
 import sqlite3
+import socket
 
 from thermod import ThermodStatus
 from thermod.common import LogStyleAdapter, LOGGER_BASE_NAME, LOGGER_FMT_MSG, \
@@ -36,7 +37,7 @@ from thermod.common import LogStyleAdapter, LOGGER_BASE_NAME, LOGGER_FMT_MSG, \
 from logging.handlers import SysLogHandler
 from datetime import datetime
 
-__version__ = '1.0.0b1'
+__version__ = '1.0.0b2'
 __date__ = '2018-04-04'
 __updated__ = '2018-04-06'
 
@@ -69,12 +70,17 @@ parser = argparse.ArgumentParser(description='Thermod database statistics gather
 parser.add_argument('-v', '--version', action='version', version='%(prog)s {}'.format(__version__))
 parser.add_argument('-f', '--dbfile', action='store', default='thermod-stats.db', help='path to database file')
 parser.add_argument('-t', '--timelimit', action='store', type=int, default=1095, help='number of days to keep in the database (default 3 years, set to 0 to disable)')
-parser.add_argument('-H', '--host', action='store', default='localhost', help='thermod socket hostname')
-parser.add_argument('-P', '--port', action='store', type=int, default=4344, help='thermod socket port')
+parser.add_argument('-H', '--host', action='store', help='thermod hostname (default to the name of the current system)')
+parser.add_argument('-P', '--port', action='store', type=int, default=4344, help='thermod socket port (default to thermod default port)')
 parser.add_argument('-C', '--noclean', action='store_true', help='do not delete invalid records on monitor shutdown')
 parser.add_argument('-D', '--debug', action='store_true', help='start monitor in debug mode')
 parser.add_argument('-d', '--daemon', action='store_true', help='start monitor in background (log to syslog)')
 args = parser.parse_args()
+
+if args.host:
+    HOSTNAME = args.host
+else:
+    HOSTNAME = socket.gethostname()
 
 if args.debug:
     logger.setLevel(logging.DEBUG)
@@ -95,7 +101,7 @@ else:
 # main
 logger.info('Thermod DB-Stats monitor v{} started', __version__)
 
-REQUEST_URI = 'http://{}:{}'.format(args.host, args.port)
+REQUEST_URI = 'http://{}:{}'.format(HOSTNAME, args.port)
 LAST_STATUS = None
 LAST_SWITCHON_TIME = 0
 
@@ -135,7 +141,7 @@ _delete_invalid_records = 'delete from thermod_stats where hostname = ? and swit
 try:
     logger.debug('opening database {}', args.dbfile)
     connection = sqlite3.connect(args.dbfile)
-    logger.info('database {} opened for host {}', args.dbfile, args.host)
+    logger.info('database {} opened for host {}', args.dbfile, HOSTNAME)
     
     def rollback():
         connection.rollback()
@@ -166,7 +172,7 @@ try:
             if not LAST_STATUS.error:
                 if LAST_STATUS.heating_status == 1:
                     logger.debug('the heating is currently on, inserting a new record in the database')
-                    cursor.execute(_insert_switchon, (args.host,
+                    cursor.execute(_insert_switchon, (HOSTNAME,
                                                       LAST_STATUS.timestamp,
                                                       LAST_STATUS.current_temperature,
                                                       LAST_STATUS.status))
@@ -217,7 +223,7 @@ try:
                         logger.debug('the heating has just been switched ON, inserting '
                                      'a new record in the database')
                         
-                        cursor.execute(_insert_switchon, (args.host,
+                        cursor.execute(_insert_switchon, (HOSTNAME,
                                                           status.timestamp,
                                                           status.current_temperature,
                                                           status.status))
@@ -238,7 +244,7 @@ try:
                                                            # last time the
                                                            # heating has been
                                                            # switched on
-                                                           args.host,
+                                                           HOSTNAME,
                                                            LAST_SWITCHON_TIME))
                         connection.commit()
                         LAST_SWITCHON_TIME = 0
@@ -287,24 +293,31 @@ try:
         # is shutting down with no errors.
         if args.timelimit > 0 and MAIN_RETURN_CODE == 0:
             try:
-                logger.info('deleting records older than {}',
-                            datetime.fromtimestamp(time.time() - args.timelimit*24*60*60).strftime('%c'))
-                cursor.execute(_delete_old_records, (args.host, args.timelimit))
+                _last_time = datetime.fromtimestamp(time.time() - args.timelimit*24*60*60).strftime('%c')
+                
+                logger.debug('deleting records older than {}', _last_time)
+                cursor.execute(_delete_old_records, (HOSTNAME, args.timelimit))
                 connection.commit()
+                logger.info('deleted {} record(s) older then {}',
+                            cursor.rowcount,
+                            _last_time)
                 
             except sqlite3.Error as sqle:
-                logger.warning('cannote delete old records: {}', sqle)
+                logger.warning('cannot delete old records: {}', sqle)
                 rollback()
         
         # Removing invalid records only if noclean is not set and the monitor
         # is shutting down with no errors.
         if not args.noclean and MAIN_RETURN_CODE == 0:
             try:
-                logger.info('deleting invalid records (records with switchon '
-                            'time but no switchoff time)')
+                logger.debug('deleting invalid records (records with switchon '
+                             'time but no switchoff time)')
                 
-                cursor.execute(_delete_invalid_records, (args.host, ))
+                cursor.execute(_delete_invalid_records, (HOSTNAME, ))
                 connection.commit()
+                logger.info('deleted {} invalid record(s) for host {}',
+                            cursor.rowcount,
+                            HOST)
                 
             except sqlite3.Error as sqle:
                 logger.warning('cannote delete old records: {}', sqle)
