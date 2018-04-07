@@ -1,7 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-"""
-Thermod monitor that collects statistics on thermod operation.
+"""Thermod DB-Stats monitor.
+
+This monitor collects statistics on Thermod operation.
 
 @author:     Simone Rossetto
 @copyright:  2018 Simone Rossetto
@@ -25,25 +26,28 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import sys
 import signal
 import argparse
-import requests
 import logging
 import time
 import sqlite3
 import socket
+import requests
 
 from thermod import ThermodStatus
 from thermod.common import LogStyleAdapter, LOGGER_BASE_NAME, LOGGER_FMT_MSG, \
-    LOGGER_FMT_TIME, LOGGER_FMT_STYLE, LOGGER_FMT_MSG_SYSLOG
+    LOGGER_FMT_TIME, LOGGER_FMT_DATETIME, LOGGER_FMT_STYLE, \
+    LOGGER_FMT_MSG_SYSLOG, SOCKET_DEFAULT_PORT
 from logging.handlers import SysLogHandler
 from datetime import datetime
 
-__version__ = '1.0.0b2'
+__version__ = '1.0.0b3'
 __date__ = '2018-04-04'
-__updated__ = '2018-04-06'
+__updated__ = '2018-04-07'
+
+__monitor_name__ = 'dbstats'
 
 
 # setting up logging system
-logger = LogStyleAdapter(logging.getLogger('{}.dbstats'.format(LOGGER_BASE_NAME)))
+logger = LogStyleAdapter(logging.getLogger('{}.{}'.format(LOGGER_BASE_NAME, __monitor_name__)))
 logger.setLevel(logging.INFO)
 
 # shutdown check and return code
@@ -66,22 +70,25 @@ RET_CODE_UNKNOWN_ERR = 77
 
 
 # parsing input arguments
-parser = argparse.ArgumentParser(description='Thermod database statistics gathering')
+parser = argparse.ArgumentParser(description='Thermod database statistics gathering monitor')
 parser.add_argument('-v', '--version', action='version', version='%(prog)s {}'.format(__version__))
-parser.add_argument('-f', '--dbfile', action='store', default='thermod-stats.db', help='path to database file')
+parser.add_argument('-f', '--dbfile', action='store', required=True, help='path to database file')
 parser.add_argument('-t', '--timelimit', action='store', type=int, default=1095, help='number of days to keep in the database (default 3 years, set to 0 to disable)')
 parser.add_argument('-H', '--host', action='store', help='thermod hostname (default to the name of the current system)')
-parser.add_argument('-P', '--port', action='store', type=int, default=4344, help='thermod socket port (default to thermod default port)')
-parser.add_argument('-C', '--noclean', action='store_true', help='do not delete invalid records on monitor shutdown')
+parser.add_argument('-P', '--port', action='store', type=int, default=SOCKET_DEFAULT_PORT, help='thermod socket port (default to {})'.format(SOCKET_DEFAULT_PORT))
+parser.add_argument('--noclean', action='store_true', help='do not delete invalid records on monitor shutdown')
+parser.add_argument('-L', '--log', action='store', default=None, help='write log messages to LOG file (full path)')
 parser.add_argument('-D', '--debug', action='store_true', help='start monitor in debug mode')
-parser.add_argument('-d', '--daemon', action='store_true', help='start monitor in background (log to syslog)')
+parser.add_argument('--daemon', action='store_true', help='start monitor in background (log to syslog)')
 args = parser.parse_args()
 
+# get current hostname
 if args.host:
     HOSTNAME = args.host
 else:
     HOSTNAME = socket.gethostname()
 
+# set debugging level and log facility
 if args.debug:
     logger.setLevel(logging.DEBUG)
 
@@ -96,6 +103,27 @@ else:
                                            datefmt=LOGGER_FMT_TIME,
                                            style=LOGGER_FMT_STYLE))
     logger.addHandler(console)
+
+if args.log:
+    try:
+        logfile = logging.FileHandler(args.log, mode='a')
+    
+    except PermissionError as pe:
+        logger.warning('cannot write log to `{}`: {}', args.log, pe)
+        logger.info('the monitor will start without logfile')
+    
+    else:
+        logfile.setFormatter(logging.Formatter(fmt=LOGGER_FMT_MSG,
+                                               datefmt=LOGGER_FMT_DATETIME,
+                                               style=LOGGER_FMT_STYLE))
+        logger.addHandler(logfile)
+    
+        if args.daemon:
+            # When a custom log file is configured and the deamon in started
+            # in background, only warnings and errors are printed to syslog.
+            syslog.setLevel(logging.WARNING)
+        
+        logger.debug('logging to file {}', args.log)
 
 
 # main
@@ -171,7 +199,9 @@ try:
             
             if not LAST_STATUS.error:
                 if LAST_STATUS.heating_status == 1:
-                    logger.debug('the heating is currently on, inserting a new record in the database')
+                    logger.info('the heating is currently ON, inserting a new '
+                                'record in the database')
+                    
                     cursor.execute(_insert_switchon, (HOSTNAME,
                                                       LAST_STATUS.timestamp,
                                                       LAST_STATUS.current_temperature,
@@ -180,7 +210,8 @@ try:
                     LAST_SWITCHON_TIME = LAST_STATUS.timestamp
                 
                 else:
-                    logger.debug('the heating is currently off, waiting for the first switch on')
+                    logger.info('the heating is currently OFF, waiting for '
+                                'the first switch on')
             
             else:
                 logger.warning('the status returned from thermod contains an '
@@ -210,7 +241,7 @@ try:
         while RUNNING:
             try:
                 logger.debug('attaching monitor to thermod')
-                rsp = session.get('{}/monitor'.format(REQUEST_URI))
+                rsp = session.get('{}/monitor?name={}'.format(REQUEST_URI, __monitor_name__))
                 rsp.raise_for_status()  # check error status code
                 
                 logger.debug('processing response data')
@@ -219,9 +250,9 @@ try:
                 logger.debug('current status: {}', status)
                 
                 if not status.error:
-                    if status.heating_status > LAST_STATUS.heating_status:  # heating just switched on
-                        logger.debug('the heating has just been switched ON, inserting '
-                                     'a new record in the database')
+                    if status.heating_status > LAST_STATUS.heating_status:
+                        logger.info('the heating has just been switched ON, '
+                                    'inserting a new record in the database')
                         
                         cursor.execute(_insert_switchon, (HOSTNAME,
                                                           status.timestamp,
@@ -230,10 +261,10 @@ try:
                         connection.commit()
                         LAST_SWITCHON_TIME = status.timestamp
                     
-                    elif status.heating_status < LAST_STATUS.heating_status:  # heating just switched off
-                        logger.debug('the heating has just been switched OFF, '
-                                     'updating the last switchon record '
-                                     '(timestamp: {})', LAST_SWITCHON_TIME)
+                    elif status.heating_status < LAST_STATUS.heating_status:
+                        logger.info('the heating has just been switched OFF, '
+                                     'updating the last switchon record{}',
+                                     ' (timestamp: {})'.format(LAST_SWITCHON_TIME) if args.debug else '')
                         
                         cursor.execute(_update_switchoff, (status.timestamp,
                                                            status.current_temperature,
@@ -257,8 +288,8 @@ try:
                 
                 else:
                     logger.warning('the status returned from thermod contains an '
-                                   'error: {} ({})', LAST_STATUS.error,
-                                                     LAST_STATUS.explain)
+                                   'error: {} ({})', status.error,
+                                                     status.explain)
                     
                     logger.info('no record has been inserted or updated')
                     # no need to rollback, no query executed
@@ -286,8 +317,12 @@ try:
             
             except KeyboardInterrupt:
                 logger.debug('shutdown requested by keyboard interrupt')
-                shutdown()
-                rollback()
+                
+                if MAIN_RETURN_CODE == 0:
+                    logger.debug('committing unsaved changes')
+                    connection.commit()
+                
+                shutdown(exitcode=MAIN_RETURN_CODE)
         
         # Removing old records only if timelimit is positive and the monitor
         # is shutting down with no errors.
@@ -317,7 +352,7 @@ try:
                 connection.commit()
                 logger.info('deleted {} invalid record(s) for host {}',
                             cursor.rowcount,
-                            HOST)
+                            HOSTNAME)
                 
             except sqlite3.Error as sqle:
                 logger.warning('cannote delete old records: {}', sqle)
@@ -328,7 +363,7 @@ try:
         MAIN_RETURN_CODE = RET_CODE_SQL_ERR
     
     except Exception as e:
-        logger.critical('unknown error creating table or indexes in database file: {}', e)
+        logger.critical('unknown error: {}', e)
         MAIN_RETURN_CODE = RET_CODE_UNKNOWN_ERR_OUTER
     
     finally:
