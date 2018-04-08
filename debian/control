@@ -1,0 +1,24 @@
+Source: thermod-monitor-dbstats
+Section: utils
+Priority: optional
+Maintainer: Simone Rossetto <simros85@gmail.com>
+Build-Depends:
+ debhelper (>=9.20160709),
+ dh-exec,
+ dh-python,
+ dh-systemd (>=1.5),
+ python3-all,
+ python3-setuptools,
+ python3-thermod (>=1.0.0),
+ python3-requests (>=2.4.3)
+Standards-Version: 4.0.0
+X-Python3-Version: >= 3.5
+Homepage: https://github.com/droscy/thermod-monitor-dbstats
+Vcs-Git: https://github.com/droscy/thermod-monitor-dbstats.git
+Vcs-Browser: https://github.com/droscy/thermod-monitor-dbstats
+
+Package: thermod-monitor-dbstats
+Architecture: all
+Depends: ${python3:Depends}, ${misc:Depends}, adduser
+Description: Collects statistics on Thermod operation
+ This monitor collects statistics on Thermod operation.
