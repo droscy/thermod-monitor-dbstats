@@ -39,4 +39,28 @@ python3 setup.py install
 
 
 ## Starting/Stopping the monitor
-TODO
+To start *Thermod DB-Stats monitor* from the same system where Thermod is
+running simply execute
+
+```bash
+thermod-monitor-dbstats --dbfile {file-path}
+```
+
+where `{file-path}` must be set to a file-path where to store all the
+informations get from Thermod.
+
+If Thermod is running on a different system, the option `--host` can be set
+to the name of the running host. To have the full list of available options
+run *Thermod DB-Stats monitor* with `--help` option.
+
+### Systemd
+If *systemd* is in use, copy the file `thermod-monitor-dbstats.service`
+to folder `/lib/systemd/system`, change it to meet your requirements (i.e.
+the path where you want to save the file) then execute
+
+```bash
+systemctl daemon-reload
+systemctl enable thermod-monitor-dbstats.service
+```
+
+to automatically start the monitor at system startup.

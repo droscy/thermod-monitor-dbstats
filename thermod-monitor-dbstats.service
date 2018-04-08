@@ -1,0 +1,15 @@
+[Unit]
+Description=Thermod DB-Stats monitor
+Requires=network.target
+Wants=thermod.service
+After=network.target thermod.service
+
+[Service]
+Type=simple
+User=thermod
+PermissionsStartOnly=true
+ExecStart=/usr/bin/thermod-monitor-dbstats -f /var/lib/thermod/thermod-stats.db --daemon
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
