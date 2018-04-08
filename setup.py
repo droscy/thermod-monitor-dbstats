@@ -24,8 +24,15 @@ from setuptools import setup
 
 def get_version():
     main_ns = {}
-    with open('thermod-monitor-dbstats','r') as version_file:
-        exec(version_file.read(), main_ns)  # TODO non funziona perché è uno script!!
+    version_str = None
+    
+    with open('thermod-monitor-dbstats','rt') as script:
+        for line in script:
+            if line.find('__version__') == 0:
+                version_str = '# -*- coding: utf-8 -*-\n{}'.format(line)
+                break
+    
+    exec(version_str, main_ns)
     return main_ns['__version__']
 
 setup(name='thermod-monitor-dbstats',
