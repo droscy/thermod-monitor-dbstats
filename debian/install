@@ -1,1 +1,2 @@
 thermod-monitor-dbstats usr/bin/
+thermod-monitor-dbstats.service lib/systemd/system/
