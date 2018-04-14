@@ -1,7 +1,5 @@
 #!/bin/sh
-# postinst script for #PACKAGE#
-#
-# see: dh_installdeb(1)
+# postinst script for thermod-monitor-dbstats
 
 set -e
 
