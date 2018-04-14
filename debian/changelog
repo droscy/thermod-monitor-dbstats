@@ -1,3 +1,11 @@
+thermod-monitor-dbstats (1.0.0~beta3-2) unstable; urgency=medium
+
+  * Fix install of systemd service file
+  * Fix litian warn for obsolete package on dh-systemd
+  * Change behaviour of postrm script
+
+ -- Simone Rossetto <simros85@gmail.com>  Sat, 14 Apr 2018 09:00:03 +0200
+
 thermod-monitor-dbstats (1.0.0~beta3-1) unstable; urgency=medium
 
   * First tested version.
