@@ -39,9 +39,9 @@ from thermod.common import LogStyleAdapter, LOGGER_BASE_NAME, LOGGER_FMT_MSG, \
 from logging.handlers import SysLogHandler
 from datetime import datetime
 
-__version__ = '1.0.0b3'
+__version__ = '1.0.0b4'
 __date__ = '2018-04-04'
-__updated__ = '2018-04-07'
+__updated__ = '2018-04-14'
 
 __monitor_name__ = 'dbstats'
 
