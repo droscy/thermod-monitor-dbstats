@@ -20,4 +20,6 @@ Package: thermod-monitor-dbstats
 Architecture: all
 Depends: ${python3:Depends}, ${misc:Depends}, adduser
 Description: Collects statistics on Thermod operation
- This monitor collects statistics on Thermod operation.
+ This monitor collects statistics on Thermod operation recording status
+ changes in order to track switch ON and switch OFF of the heating along
+ with timestamp.
