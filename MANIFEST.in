@@ -1,5 +1,6 @@
-include setup.py
+include COPYING
 include MANIFEST.in
 include README.md
-include COPYING
+include setup.py
 include thermod-monitor-dbstats
+include thermod-monitor-dbstats.service

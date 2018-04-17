@@ -38,7 +38,7 @@ def get_version():
 setup(name='thermod-monitor-dbstats',
       version=get_version(),
       description='Thermod DB-Stats monitor.',
-      long_description='This monitor collects statistics on Thermod operation',
+      long_description='Thermod DB-Stats monitor collects statistics on Thermod operation',
       author='Simone Rossetto',
       author_email='simros85@gmail.com',
       url='https://github.com/droscy/thermod-monitor-dbstats',

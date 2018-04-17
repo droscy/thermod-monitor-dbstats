@@ -39,9 +39,9 @@ from thermod.common import LogStyleAdapter, LOGGER_BASE_NAME, LOGGER_FMT_MSG, \
 from logging.handlers import SysLogHandler
 from datetime import datetime
 
-__version__ = '1.0.0b3'
+__version__ = '1.0.0'
 __date__ = '2018-04-04'
-__updated__ = '2018-04-07'
+__updated__ = '2018-04-16'
 
 __monitor_name__ = 'dbstats'
 
@@ -263,8 +263,8 @@ try:
                     
                     elif status.heating_status < LAST_STATUS.heating_status:
                         logger.info('the heating has just been switched OFF, '
-                                     'updating the last switchon record{}',
-                                     ' (timestamp: {})'.format(LAST_SWITCHON_TIME) if args.debug else '')
+                                    'updating the last switchon record{}',
+                                    ' (timestamp: {})'.format(LAST_SWITCHON_TIME) if args.debug else '')
                         
                         cursor.execute(_update_switchoff, (status.timestamp,
                                                            status.current_temperature,

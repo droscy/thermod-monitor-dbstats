@@ -1,8 +1,8 @@
 [Unit]
 Description=Thermod DB-Stats monitor
-Requires=network.target
+Requires=network.target syslog.service
 Wants=thermod.service
-After=network.target thermod.service
+After=network.target syslog.service thermod.service
 
 [Service]
 Type=simple
