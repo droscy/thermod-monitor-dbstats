@@ -1,0 +1,127 @@
+.\"
+.\" Thermod DB-Stats monitor manpage-
+.\"
+.\" process with groff -man -Tascii thermod-monitor-dbstats.1
+.\" or with groff -t -e -mandoc -Tps thermod-monitor-dbstats.1 > thermod-monitor-dbstats.ps
+.\" or with nroff -man thermod-monitor-dbstats.1 | less
+.\"
+.
+.
+.\" Compatibility for legacy Unix systems
+.de TQ
+.  br
+.  ns
+.  TP \\$1\" no doublequotes around argument!
+..
+.
+.
+.TH thermod-monitor-dbstats 1 "2018-04-17" "1.0.0" "User Manual"
+.SH NAME
+thermod-monitor-dbstats \- collects statistics on Thermod operation
+
+.SH SYNOPSIS
+.SY thermod-monitor-dbstats
+.B \-f file
+.OP \-t timelimit
+.OP \-H hostname
+.OP \-P port
+.OP \-\-noclean
+.OP \-L log
+.OP \-\-debug
+.OP \-\-daemon
+.OP \-\-help
+.OP \-\-version
+.YS
+
+.SH DESCRIPTION
+This monitor collects statistics on Thermod operation saving them to a database
+file chosen by
+.B \-f file
+option. The database file is a standard sqlite3 file where any status change is
+recorded: from heating OFF to heating ON and vice-versa.
+
+.SH OPTIONS
+.TP
+.BI \-f\  file
+.TQ
+.BI \-\-dbfile\  file
+path to database file
+.TP
+.BI \-t\  timelimit
+.TQ
+.BI \-\-timelimit\  timelimit
+number of days to keep in the database (default 3 years, set to 0 to disable)
+.TP
+.BI \-H\  hostname
+.TQ
+.BI \-\-host\  hostname
+thermod hostname (default to the name of the current system)
+.TP
+.BI \-P\  port
+.TQ
+.BI \-\-port\  port
+thermod socket port (default to 4344)
+.TP
+.BI \-\-noclean
+do not delete invalid records from the database file on monitor shutdown
+.TP
+.BI \-L\  log
+.TQ 
+.BI \-\-log\  log
+write log messages to LOG file (full path)
+.TP
+.BI \-D
+.TQ
+.BI \-\-debug
+start monitor in debug mode
+.TP
+.BI \-\-daemon
+start monitor in background (log to syslog)
+.TP
+.BI \-h
+.TQ
+.BI \-\-help
+show help message and exit
+.TP
+.BI \-v
+.TQ
+.BI \-\-version
+show program's version number and exit
+
+.SH EXAMPLES
+.EX
+thermod-monitor-dbstats -f /var/lib/thermod/thermod-stats.db --daemon
+.EE
+.RS
+This is the default start command of systemd service file to monitor Thermod
+installed on the local system.
+.RE
+
+.EX
+thermod-monitor-dbstats -f thermod-stats.db --host thermo1.domain.local --debug
+.EE
+.RS
+This command can be used to start the monitor in debug mode, saving data to the
+local file and connecting to the remote Thermod \fBthermod1.domain.local\fR.
+.RE
+.SH RETURNED\ VALUES
+.IP - 2
+.B 0
+no error
+.IP - 2
+.B 21
+a SQL error writing or reading data from database file
+.IP - 2
+.B >70
+a generic error
+
+.SH COPYRIGHT
+Copyright (C) 2018
+.MT simros85@gmail.com
+Simone Rossetto
+.ME
+
+GNU General Public License v3
+.ce 0
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY.
