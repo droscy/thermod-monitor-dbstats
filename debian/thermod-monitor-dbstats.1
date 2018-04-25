@@ -1,5 +1,5 @@
 .\"
-.\" Thermod DB-Stats monitor manpage-
+.\" Thermod DB-Stats monitor manpage
 .\"
 .\" process with groff -man -Tascii thermod-monitor-dbstats.1
 .\" or with groff -t -e -mandoc -Tps thermod-monitor-dbstats.1 > thermod-monitor-dbstats.ps
@@ -15,9 +15,16 @@
 ..
 .
 .
-.TH thermod-monitor-dbstats 1 "2018-04-17" "1.0.0" "User Manual"
+.TH thermod-monitor-dbstats 1 "April 2018" "1.0.0" "User Commands"
 .SH NAME
 thermod-monitor-dbstats \- collects statistics on Thermod operation
+
+.SH DESCRIPTION
+This monitor collects statistics on Thermod operation saving them to a database
+file chosen by
+.B \-f file
+option. The database file is a standard sqlite3 file where any status change is
+recorded: from heating OFF to heating ON and vice-versa.
 
 .SH SYNOPSIS
 .SY thermod-monitor-dbstats
@@ -32,13 +39,6 @@ thermod-monitor-dbstats \- collects statistics on Thermod operation
 .OP \-\-help
 .OP \-\-version
 .YS
-
-.SH DESCRIPTION
-This monitor collects statistics on Thermod operation saving them to a database
-file chosen by
-.B \-f file
-option. The database file is a standard sqlite3 file where any status change is
-recorded: from heating OFF to heating ON and vice-versa.
 
 .SH OPTIONS
 .TP
