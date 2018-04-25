@@ -1,3 +1,10 @@
+thermod-monitor-dbstats (1.0.0-2) unstable; urgency=medium
+
+  * Add Debian watch file
+  * Change manpage to be more logical
+
+ -- Simone Rossetto <simros85@gmail.com>  Wed, 25 Apr 2018 08:18:30 +0200
+
 thermod-monitor-dbstats (1.0.0-1) unstable; urgency=medium
 
   * Stable upstream release
