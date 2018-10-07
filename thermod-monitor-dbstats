@@ -39,9 +39,9 @@ from thermod.common import LogStyleAdapter, LOGGER_BASE_NAME, LOGGER_FMT_MSG, \
 from logging.handlers import SysLogHandler
 from datetime import datetime
 
-__version__ = '1.0.0'
+__version__ = '1.1.0b1'
 __date__ = '2018-04-04'
-__updated__ = '2018-04-16'
+__updated__ = '2018-10-07'
 
 __monitor_name__ = 'dbstats'
 
@@ -133,7 +133,15 @@ REQUEST_URI = 'http://{}:{}'.format(HOSTNAME, args.port)
 LAST_STATUS = None
 LAST_SWITCHON_TIME = 0
 
+
 # init queries
+_db_version = 2  # current database-file version
+
+_create_table_version = 'create table if not exists thermod_dbstats_version (version int not null)'
+_select_version = 'select version from thermod_dbstats_version'
+_insert_version = 'insert into thermod_dbstats_version (version) values (?)'
+_update_version = 'update thermod_dbstats_version set version=?'
+
 _create_table = '''\
 create table if not exists thermod_stats 
 (
@@ -146,9 +154,12 @@ create table if not exists thermod_stats
   switchoff_status text
 )'''
 
-_create_index_on = 'create unique index if not exists idx_switchon on thermod_stats (switchon_time)'
+_alter_table_add_cooling = 'alter table thermod_stats add cooling boolean not null default 0'
 
-_insert_switchon = 'insert into thermod_stats values (?,?,?,?,NULL,NULL,NULL)'
+_create_index_on = 'create unique index if not exists idx_switchon on thermod_stats (hostname,switchon_time)'
+_drop_index_on = 'drop index idx_switchon'
+
+_insert_switchon = 'insert into thermod_stats values (?,?,?,?,NULL,NULL,NULL,?)'
 
 _update_switchoff = '''\
 update thermod_stats
@@ -180,8 +191,26 @@ try:
         cursor = connection.cursor()
         
         logger.debug('creating table and indexes')
+        cursor.execute(_create_table_version)
         cursor.execute(_create_table)
         cursor.execute(_create_index_on)
+        
+        logger.debug('get current database version')
+        cursor.execute(_select_version)
+        _version = cursor.fetchone()
+        _old_db_version = int(_version[0] if _version is not None else 1)
+        
+        if _old_db_version == 1:
+            # upgrade schema from version 1 to newer version
+            logger.debug('upgrading database version from {} to {}', _old_db_version, _db_version)
+            cursor.execute(_drop_index_on)
+            cursor.execute(_alter_table_add_cooling)
+            cursor.execute(_create_index_on)
+            cursor.execute(_insert_version, (_db_version, ))
+            connection.commit()
+        
+        else:
+            logger.debug('database version already up to date')
         
         logger.debug('creating network session')
         session = requests.Session()
@@ -199,19 +228,21 @@ try:
             
             if not LAST_STATUS.error:
                 if LAST_STATUS.heating_status == 1:
-                    logger.info('the heating is currently ON, inserting a new '
-                                'record in the database')
+                    logger.info('the {} is currently ON, inserting a new '
+                                'record in the database',
+                                'heating' if not LAST_STATUS.cooling else 'cooling system')
                     
                     cursor.execute(_insert_switchon, (HOSTNAME,
                                                       LAST_STATUS.timestamp,
                                                       LAST_STATUS.current_temperature,
-                                                      LAST_STATUS.status))
+                                                      LAST_STATUS.status,
+                                                      LAST_STATUS.cooling))
                     connection.commit()
                     LAST_SWITCHON_TIME = LAST_STATUS.timestamp
                 
                 else:
-                    logger.info('the heating is currently OFF, waiting for '
-                                'the first switch on')
+                    logger.info('the {} is currently OFF, waiting for the first switch on',
+                                'heating' if not LAST_STATUS.cooling else 'cooling system')
             
             else:
                 logger.warning('the status returned from thermod contains an '
@@ -251,19 +282,22 @@ try:
                 
                 if not status.error:
                     if status.heating_status > LAST_STATUS.heating_status:
-                        logger.info('the heating has just been switched ON, '
-                                    'inserting a new record in the database')
+                        logger.info('the {} has just been switched ON, '
+                                    'inserting a new record in the database',
+                                    'heating' if not status.cooling else 'cooling system')
                         
                         cursor.execute(_insert_switchon, (HOSTNAME,
                                                           status.timestamp,
                                                           status.current_temperature,
-                                                          status.status))
+                                                          status.status,
+                                                          status.cooling))
                         connection.commit()
                         LAST_SWITCHON_TIME = status.timestamp
                     
                     elif status.heating_status < LAST_STATUS.heating_status:
-                        logger.info('the heating has just been switched OFF, '
+                        logger.info('the {} has just been switched OFF, '
                                     'updating the last switchon record{}',
+                                    'heating' if not status.cooling else 'cooling system',
                                     ' (timestamp: {})'.format(LAST_SWITCHON_TIME) if args.debug else '')
                         
                         cursor.execute(_update_switchoff, (status.timestamp,
@@ -311,7 +345,7 @@ try:
                 rollback()
             
             except Exception as e:
-                logger.critical('unknown error: {}', e)
+                logger.critical('unknown error: {}', e, exc_info=True)
                 rollback()
                 shutdown(exitcode=RET_CODE_UNKNOWN_ERR_INNER)
             
@@ -363,7 +397,7 @@ try:
         MAIN_RETURN_CODE = RET_CODE_SQL_ERR
     
     except Exception as e:
-        logger.critical('unknown error: {}', e)
+        logger.critical('unknown error: {}', e, exc_info=True)
         MAIN_RETURN_CODE = RET_CODE_UNKNOWN_ERR_OUTER
     
     finally:

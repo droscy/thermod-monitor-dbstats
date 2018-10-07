@@ -5,7 +5,7 @@ It records status changes in order to track switch ON and OFF of the heating
 along with timestamp.
 
 ## License
-Thermod DB-Stats monitor v1.0.0 \
+Thermod DB-Stats monitor v1.0.0+dev \
 Copyright (C) 2018 Simone Rossetto <simros85@gmail.com> \
 GNU General Public License v3
 
@@ -29,7 +29,7 @@ GNU General Public License v3
 *Thermod DB-Stats monitor* requires [Python3](https://www.python.org/)
 (at least version 3.5) and the packages:
 
- - [thermod](https://github.com/droscy/thermod) (>=1.0.0)
+ - [thermod](https://github.com/droscy/thermod) (>=1.2.0)
  - [requests](http://docs.python-requests.org/) (>=2.4.3)
 
 ### Installation
@@ -52,6 +52,7 @@ the basic steps:
 ```bash
 git clone https://github.com/droscy/thermod-monitor-dbstats.git
 cd thermod-monitor-dbstats
+git branch --track pristine-tar origin/pristine-tar
 git checkout -b debian/master origin/debian/master
 gbp buildpackage
 ```
@@ -107,7 +108,7 @@ If the prompt `sqlite>` appears, the database is opened and ready to process
 queries. Type `.quit` to close the file and exit sqlite.
 
 ### Database schema
-The database file is very simple, it contains only the table `thermod_stats`
+The database file is very simple, it contains the table `thermod_stats`
 with the following fields:
 
  - `hostname`
@@ -117,14 +118,19 @@ with the following fields:
  - `switchoff_time`
  - `switchoff_temp`
  - `switchoff_status`
+ - `cooling`
 
 where every time is saved as a timestamp (seconds since the unix epoch)
 while every temperature is saved as a float number in celsius or farenheit
-degrees in accordance with Thermod settings.
+degrees in accordance with Thermod settings. The `cooling` column is a
+boolean indicating that the record is relative to heating or cooling system.
+
+The database file contains also the table `thermod_dbstats_version` which
+stores the current version of the database file itself.
 
 ### Some queries
 To get all the records in human-readble format of host *mythermo* recorded
-in the year *2018* execute in `sqlite>` prompt:
+in the year *2018* for *heating* execute in `sqlite>` prompt:
 
 ```sql
 select
@@ -137,10 +143,11 @@ select
   switchoff_status
 from thermod_stats
 where hostname = 'mythermo'  -- change here the hostname
+  and cooling = 0  -- change to 1 to have the cooling system
   and strftime('%Y', datetime(switchon_time, 'unixepoch', 'localtime')) = '2018';
 ```
 
-To compute how many minutes the heating has been ON per each host per each
+To compute how many minutes the *heating* has been ON per each host per each
 month execute:
 
 ```sql
@@ -149,6 +156,7 @@ select
   strftime('%Y-%m', datetime(switchoff_time, 'unixepoch', 'localtime')) as month,
   round(sum((switchoff_time-switchon_time) / 60)) as heating_on_time
 from thermod_stats
+  where cooling = 0  -- change to 1 to have the cooling system
 group by 1,2
 order by 1,2;
 ```
