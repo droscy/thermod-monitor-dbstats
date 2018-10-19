@@ -5,7 +5,7 @@ It records status changes in order to track switch ON and OFF of the heating
 along with timestamp.
 
 ## License
-Thermod DB-Stats monitor v1.0.0+dev \
+Thermod DB-Stats monitor v1.1.0 \
 Copyright (C) 2018 Simone Rossetto <simros85@gmail.com> \
 GNU General Public License v3
 
