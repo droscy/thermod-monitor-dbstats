@@ -8,9 +8,9 @@ Build-Depends:
  dh-python,
  python3-all,
  python3-setuptools,
- python3-thermod (>=1.0.0),
+ python3-thermod (>=1.2.0),
  python3-requests (>=2.4.3)
-Standards-Version: 4.0.0
+Standards-Version: 4.2.1
 X-Python3-Version: >= 3.5
 Homepage: https://github.com/droscy/thermod-monitor-dbstats
 Vcs-Git: https://github.com/droscy/thermod-monitor-dbstats.git
@@ -21,5 +21,5 @@ Architecture: all
 Depends: ${python3:Depends}, ${misc:Depends}, adduser
 Description: Collects statistics on Thermod operation
  This monitor collects statistics on Thermod operation recording status
- changes in order to track switch ON and switch OFF of the heating along
- with timestamp.
+ changes in order to track switch ON and switch OFF of the heating and
+ cooling system along with timestamp.
