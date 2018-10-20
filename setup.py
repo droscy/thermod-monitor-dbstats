@@ -44,7 +44,7 @@ setup(name='thermod-monitor-dbstats',
       url='https://github.com/droscy/thermod-monitor-dbstats',
       license = 'GPL-3.0+',
       scripts=['thermod-monitor-dbstats'],
-      install_requires=['thermod >= 1.0.0',
+      install_requires=['thermod >= 1.2.0',
                         'requests >= 2.4.3'])
 
 # vim: fileencoding=utf-8 tabstop=4 shiftwidth=4 expandtab
