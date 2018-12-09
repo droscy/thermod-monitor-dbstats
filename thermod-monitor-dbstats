@@ -39,9 +39,9 @@ from thermod.common import LogStyleAdapter, LOGGER_BASE_NAME, LOGGER_FMT_MSG, \
 from logging.handlers import SysLogHandler
 from datetime import datetime
 
-__version__ = '1.1.0'
+__version__ = '1.1.1b1'
 __date__ = '2018-04-04'
-__updated__ = '2018-10-19'
+__updated__ = '2018-12-09'
 
 __monitor_name__ = 'dbstats'
 
@@ -64,6 +64,7 @@ signal.signal(signal.SIGTERM, shutdown)
 
 # return codes on error
 RET_CODE_SQL_ERR = 21
+RET_CODE_UNKNOWN_ERR_STATUS = 71
 RET_CODE_UNKNOWN_ERR_INNER = 73
 RET_CODE_UNKNOWN_ERR_OUTER = 75
 RET_CODE_UNKNOWN_ERR = 77
@@ -132,6 +133,7 @@ logger.info('Thermod DB-Stats monitor v{} started', __version__)
 REQUEST_URI = 'http://{}:{}'.format(HOSTNAME, args.port)
 LAST_STATUS = None
 LAST_SWITCHON_TIME = 0
+SLEEP_TIME = 10  # seconds
 
 
 # init queries
@@ -215,58 +217,83 @@ try:
         logger.debug('creating network session')
         session = requests.Session()
         
-        # first connection
-        try:    
-            logger.debug('get current status from thermod socket')
-            rsp = session.get('{}/status'.format(REQUEST_URI))
-            rsp.raise_for_status()  # check error status code
-            
-            logger.debug('processing response data')
-            jrsp = rsp.json()
-            LAST_STATUS = ThermodStatus(**jrsp)
-            logger.debug('current status: {}', LAST_STATUS)
-            
-            if not LAST_STATUS.error:
-                if LAST_STATUS.heating_status == 1:
-                    logger.info('the {} is currently ON, inserting a new '
-                                'record in the database',
-                                'heating' if not LAST_STATUS.cooling else 'cooling system')
+        # first connection to get current status
+        while LAST_STATUS is None:
+            try:
+                logger.debug('get current status from thermod socket')
+                rsp = session.get('{}/status'.format(REQUEST_URI))
+                rsp.raise_for_status()  # check error status code
+                
+                logger.debug('processing response data')
+                jrsp = rsp.json()
+                LAST_STATUS = ThermodStatus(**jrsp)
+                logger.debug('current status: {}', LAST_STATUS)
+                
+                if not LAST_STATUS.error:
+                    if LAST_STATUS.heating_status == 1:
+                        logger.info('the {} is currently ON, inserting a new '
+                                    'record in the database',
+                                    'heating' if not LAST_STATUS.cooling else 'cooling system')
+                        
+                        cursor.execute(_insert_switchon, (HOSTNAME,
+                                                          LAST_STATUS.timestamp,
+                                                          LAST_STATUS.current_temperature,
+                                                          LAST_STATUS.status,
+                                                          LAST_STATUS.cooling))
+                        connection.commit()
+                        LAST_SWITCHON_TIME = LAST_STATUS.timestamp
                     
-                    cursor.execute(_insert_switchon, (HOSTNAME,
-                                                      LAST_STATUS.timestamp,
-                                                      LAST_STATUS.current_temperature,
-                                                      LAST_STATUS.status,
-                                                      LAST_STATUS.cooling))
-                    connection.commit()
-                    LAST_SWITCHON_TIME = LAST_STATUS.timestamp
+                    else:
+                        logger.info('the {} is currently OFF, waiting for the first switch on',
+                                    'heating' if not LAST_STATUS.cooling else 'cooling system')
                 
                 else:
-                    logger.info('the {} is currently OFF, waiting for the first switch on',
-                                'heating' if not LAST_STATUS.cooling else 'cooling system')
-            
-            else:
-                logger.warning('the status returned from thermod contains an '
-                               'error: {} ({})', LAST_STATUS.error,
-                                                 LAST_STATUS.explain)
+                    logger.warning('the status returned from thermod contains an '
+                                   'error: {} ({})', LAST_STATUS.error,
+                                                     LAST_STATUS.explain)
+                    
+                    logger.info('no record has been inserted or updated')
+                    # no need to rollback, no query executed
                 
-                logger.info('no record has been inserted or updated')
-                # no need to rollback, no query executed
+            except ValueError as ve:
+                logger.warning('invalid value returned from thermod: {}', ve)
+                rollback()
+                
+                logger.info('going to sleep for {} seconds', SLEEP_TIME)
+                time.sleep(SLEEP_TIME)
             
-        except ValueError as ve:
-            logger.warning('invalid value returned from thermod: {}', ve)
-            rollback()
-        
-        except (requests.ConnectionError, requests.Timeout) as e:
-            logger.error('cannot contact thermod socket: {}', e)
-            rollback()
-        
-        except requests.RequestException as re:
-            logger.error('cannot get current status from thermod: {}', re)
-            rollback()
+            except (requests.ConnectionError, requests.Timeout) as e:
+                logger.error('cannot contact thermod socket: {}', e)
+                rollback()
+                
+                logger.info('going to sleep for {} seconds', SLEEP_TIME)
+                time.sleep(SLEEP_TIME)
             
-        except sqlite3.Error as sqle:
-            logger.error('database error: {}', sqle)
-            rollback()
+            except requests.RequestException as re:
+                logger.error('cannot get current status from thermod: {}', re)
+                rollback()
+                
+                logger.info('going to sleep for {} seconds', SLEEP_TIME)
+                time.sleep(SLEEP_TIME)
+                
+            except sqlite3.Error as sqle:
+                logger.error('database error: {}', sqle)
+                rollback()
+                shutdown(exitcode=RET_CODE_SQL_ERR)
+            
+            except Exception as e:
+                logger.critical('unknown error: {}', e, exc_info=True)
+                rollback()
+                shutdown(exitcode=RET_CODE_UNKNOWN_ERR_INNER)
+            
+            except KeyboardInterrupt:
+                logger.debug('shutdown requested by keyboard interrupt')
+                
+                if MAIN_RETURN_CODE == 0:
+                    logger.debug('committing unsaved changes')
+                    connection.commit()
+                
+                shutdown(exitcode=MAIN_RETURN_CODE)
         
         # main loop
         while RUNNING:
@@ -331,18 +358,21 @@ try:
             except ValueError as ve:
                 logger.warning('invalid value returned from thermod: {}', ve)
                 rollback()
+                
+                logger.info('going to sleep for {} seconds', SLEEP_TIME)
+                time.sleep(SLEEP_TIME)
             
             except requests.RequestException as re:
                 logger.error('cannot get current status from thermod: {}', re)
                 rollback()
                 
-                _sleep_sec = 10
-                logger.info('going to sleep for {} seconds', _sleep_sec)
-                time.sleep(_sleep_sec)
+                logger.info('going to sleep for {} seconds', SLEEP_TIME)
+                time.sleep(SLEEP_TIME)
             
             except sqlite3.Error as sqle:
                 logger.error('database error: {}', sqle)
                 rollback()
+                shutdown(exitcode=RET_CODE_SQL_ERR)
             
             except Exception as e:
                 logger.critical('unknown error: {}', e, exc_info=True)

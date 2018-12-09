@@ -2,10 +2,10 @@
 Collects statistics on Thermod operation.
 
 It records status changes in order to track switch ON and OFF of the heating
-along with timestamp.
+and cooling system along with timestamp.
 
 ## License
-Thermod DB-Stats monitor v1.1.0 \
+Thermod DB-Stats monitor v1.1.0+dev \
 Copyright (C) 2018 Simone Rossetto <simros85@gmail.com> \
 GNU General Public License v3
 
@@ -161,7 +161,7 @@ group by 1,2
 order by 1,2;
 ```
 
-To get... something else, ask me, I'll try to help you :-)
+To get... something else... ask me, I'll try to help you :-)
 
 ### Clean database on shutdown
 During the shutdown *DB-Stats monitor* cleans the database in two ways:
